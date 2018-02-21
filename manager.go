@@ -37,21 +37,28 @@ type Storer interface {
 	FailJob(ctx context.Context, job Job) error
 }
 
+// Backoff controls how the manager pauses between runs
+type Backoff interface {
+	Pause()
+}
+
 // Manager manages work using a store and a handler
 type Manager struct {
 	sync.Mutex
 	id      string
 	store   Storer
 	handler Handler
+	backoff Backoff
 	stop    bool
 }
 
 // New creates a new manager
-func New(id string, store Storer, handler Handler) *Manager {
+func New(id string, store Storer, handler Handler, backoff Backoff) *Manager {
 	return &Manager{
 		id:      id,
 		store:   store,
 		handler: handler,
+		backoff: backoff,
 		stop:    false,
 	}
 }
@@ -62,7 +69,7 @@ func (m *Manager) WorkerID() string {
 }
 
 func (m *Manager) pause() {
-	time.Sleep(1 * time.Millisecond)
+	m.backoff.Pause()
 }
 
 // Stop this Manager once it has completed its current work

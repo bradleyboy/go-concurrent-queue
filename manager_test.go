@@ -87,6 +87,7 @@ func (j *testJob) WorkerID() string {
 
 type testHandler struct{}
 
+// Handle the job with some random delay, and fail roughly 10% of the time
 func (h *testHandler) Handle(ctx context.Context, job Job) error {
 	r := rand.Intn(jobDelay)
 	t := int(math.Floor(jobDelay / 20))
@@ -186,21 +187,27 @@ func (s *testStore) FailJob(ctx context.Context, job Job) error {
 	return nil
 }
 
+type testBackoff struct{}
+
+func (b *testBackoff) Pause() {
+	time.Sleep(1 * time.Millisecond)
+}
+
 func TestManager(t *testing.T) {
 	totalJobs := 100
-	totalWorkers := 20
+	totalWorkers := 10
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 
 	jobs := make(map[int]Job)
 	for i := 1; i <= totalJobs; i++ {
-		jobs[i] = &testJob{id: i, version: 1, label: "one", expires: time.Now().Add(100 * time.Millisecond)}
+		jobs[i] = &testJob{id: i, version: 1, label: fmt.Sprintf("job-%d", i), expires: time.Now().Add(100 * time.Millisecond)}
 	}
 
 	store := newStore(jobs)
 
 	for i := 1; i <= totalWorkers; i++ {
-		a := New(fmt.Sprintf("worker-%d", i), store, &testHandler{})
+		a := New(fmt.Sprintf("worker-%d", i), store, &testHandler{}, &testBackoff{})
 
 		go func() {
 			a.Start(ctx)
