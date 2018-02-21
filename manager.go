@@ -16,6 +16,7 @@ type Job interface {
 	Expires() time.Time
 	SetComplete()
 	IsComplete() bool
+	Available() bool
 }
 
 // JobEnumerater describes how to iterate through Jobs
@@ -37,8 +38,8 @@ type Storer interface {
 	FailJob(ctx context.Context, job Job) error
 }
 
-// Backoff controls how the manager pauses between runs
-type Backoff interface {
+// Waiter controls how the manager pauses between runs
+type Waiter interface {
 	Pause()
 }
 
@@ -48,17 +49,17 @@ type Manager struct {
 	id      string
 	store   Storer
 	handler Handler
-	backoff Backoff
+	wait    Waiter
 	stop    bool
 }
 
 // New creates a new manager
-func New(id string, store Storer, handler Handler, backoff Backoff) *Manager {
+func New(id string, store Storer, handler Handler, wait Waiter) *Manager {
 	return &Manager{
 		id:      id,
 		store:   store,
 		handler: handler,
-		backoff: backoff,
+		wait:    wait,
 		stop:    false,
 	}
 }
@@ -69,7 +70,7 @@ func (m *Manager) WorkerID() string {
 }
 
 func (m *Manager) pause() {
-	m.backoff.Pause()
+	m.wait.Pause()
 }
 
 // Stop this Manager once it has completed its current work

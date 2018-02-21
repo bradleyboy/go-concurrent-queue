@@ -85,6 +85,10 @@ func (j *testJob) WorkerID() string {
 	return j.workerID
 }
 
+func (j *testJob) Available() bool {
+	return !j.IsComplete() && (j.WorkerID() == "" || j.Expires().Before(time.Now()))
+}
+
 type testHandler struct{}
 
 // Handle the job with some random delay, and fail roughly 10% of the time
@@ -134,7 +138,7 @@ func (s *testStore) GetAvailableJobs(ctx context.Context) (JobEnumerater, error)
 	jobs := make(map[int]Job)
 
 	for id, job := range s.jobs {
-		if !job.IsComplete() && (job.WorkerID() == "" || job.Expires().Before(time.Now())) {
+		if job.Available() {
 			jobs[id] = job
 		}
 	}
@@ -146,7 +150,7 @@ func (s *testStore) ClaimJob(ctx context.Context, job Job, workerID string) erro
 	s.Lock()
 	defer s.Unlock()
 
-	if !job.IsComplete() && (job.WorkerID() == "" || job.Expires().Before(time.Now())) {
+	if job.Available() {
 		job.SetWorkerID(workerID)
 		job.SetExpires(time.Now().Add(5 * time.Second))
 		return nil
@@ -216,7 +220,8 @@ func TestManager(t *testing.T) {
 
 	// wait for work to be done
 	d := (totalJobs/totalWorkers)*jobDelay + (totalWorkers * 100)
-	fmt.Printf("waiting %dms...\n", d)
+	fmt.Printf("Total Jobs: %d Total Workers: %d\n", totalJobs, totalWorkers)
+	fmt.Printf("Waiting %dms...\n", d)
 	time.Sleep(time.Duration(d) * time.Millisecond)
 
 	cancel()
