@@ -82,6 +82,8 @@ type Storer interface {
 	Return(ctx context.Context, job *Job) error
 	// Done marks the job complete, no further processing should occur
 	Done(ctx context.Context, job *Job) error
+	// Add adds a Job to the store
+	Add(ctx context.Context, job *Job) (*Job, error)
 }
 
 // Waiter controls how the manager pauses between runs
