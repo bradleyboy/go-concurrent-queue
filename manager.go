@@ -54,6 +54,14 @@ func (j *Job) Lease(d time.Duration, workerID string) {
 	j.workerID = workerID
 }
 
+// Unlease releases a job from its worker
+func (j *Job) Unlease() {
+	j.Lock()
+	defer j.Unlock()
+	j.expires = time.Now()
+	j.workerID = ""
+}
+
 // Complete marks the job as done
 func (j *Job) Complete() {
 	j.Lock()
@@ -70,7 +78,7 @@ type Handler interface {
 type Storer interface {
 	// Lease checks out `count` jobs for a given duration, assigning it to the workerID
 	Lease(ctx context.Context, count int, duration time.Duration, workerID string) ([]*Job, error)
-	// Return gives a job back ot the queue, signaling it should be retried
+	// Return gives a job back to the queue, signaling it should be retried
 	Return(ctx context.Context, job *Job) error
 	// Done marks the job complete, no further processing should occur
 	Done(ctx context.Context, job *Job) error

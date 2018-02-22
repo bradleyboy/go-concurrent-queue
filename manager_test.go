@@ -92,7 +92,7 @@ func (s *testStore) Return(ctx context.Context, job *Job) error {
 	s.Lock()
 	defer s.Unlock()
 
-	job.Lease(0, "")
+	job.Unlease()
 	s.stats.Returns++
 	return nil
 }
