@@ -16,6 +16,16 @@ type Job struct {
 	complete bool
 }
 
+// NewJob creates a new job from an identifier and start time
+func NewJob(id int, begins time.Time) *Job {
+	return &Job{
+		id:       id,
+		begins:   begins,
+		expires:  begins,
+		complete: false,
+	}
+}
+
 // ID returns the unique identifier for this job
 func (j *Job) ID() int {
 	return j.id

@@ -124,15 +124,6 @@ func (b *testBackoff) Pause() {
 	time.Sleep(10 * time.Millisecond)
 }
 
-func newJob(id int) *Job {
-	return &Job{
-		id:       id,
-		expires:  time.Now(),
-		begins:   time.Now(),
-		complete: false,
-	}
-}
-
 func TestManager(t *testing.T) {
 	totalJobs := 1000
 	totalWorkers := 10
@@ -141,7 +132,7 @@ func TestManager(t *testing.T) {
 
 	jobs := make(map[int]*Job)
 	for i := 1; i <= totalJobs; i++ {
-		jobs[i] = newJob(i)
+		jobs[i] = NewJob(i, time.Now())
 	}
 
 	store := newStore(jobs)
@@ -176,7 +167,7 @@ func TestManager(t *testing.T) {
 	})
 
 	require.Equal(t, totalWorkers, len(store.stats.WorkerCounts))
-	// require.Equal(t, totalJobs, store.stats.Complete)
+	require.Equal(t, totalJobs, store.stats.Complete)
 
 	total := 0
 	for _, count := range store.stats.WorkerCounts {
@@ -193,4 +184,33 @@ func TestManager(t *testing.T) {
 	for i := 1; i <= totalJobs; i++ {
 		require.Contains(t, store.stats.FinishedLabels, fmt.Sprintf("job-%d", i))
 	}
+}
+
+func TestDelayedJob(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	jobs := make(map[int]*Job)
+	jobs[1] = NewJob(1, time.Now())
+	jobs[2] = NewJob(2, time.Now().Add(time.Duration(5*time.Second)))
+
+	store := newStore(jobs)
+
+	for i := 1; i <= 2; i++ {
+		a := New(fmt.Sprintf("worker-%d", i), store, &testHandler{}, &testBackoff{})
+
+		go func() {
+			a.Start(ctx)
+		}()
+	}
+
+	time.Sleep(1 * time.Second)
+
+	cancel()
+
+	require.Equal(t, 1, store.stats.Complete)
+	require.Equal(t, 1, len(store.stats.FinishedLabels))
+	require.Contains(t, store.stats.FinishedLabels, "job-1")
+
+	// Ensure job-2 never ran, since it was set farther in the future than the time we waited
+	require.NotContains(t, store.stats.FinishedLabels, "job-2")
 }
