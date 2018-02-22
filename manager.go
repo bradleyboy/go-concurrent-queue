@@ -32,10 +32,15 @@ type Handler interface {
 // Storer handles fetching and claming jobs from a datastore
 type Storer interface {
 	GetAvailableJobs(ctx context.Context) (JobEnumerater, error)
-	ClaimJob(ctx context.Context, job Job, workerID string) error
+	ClaimJob(ctx context.Context, job Job, worker Worker) error
 	FetchJob(ctx context.Context, job Job) (Job, error)
 	CompleteJob(ctx context.Context, job Job) error
 	FailJob(ctx context.Context, job Job) error
+}
+
+// Worker is an interface that provides a unique ID
+type Worker interface {
+	ID() string
 }
 
 // Waiter controls how the manager pauses between runs
@@ -64,8 +69,8 @@ func New(id string, store Storer, handler Handler, wait Waiter) *Manager {
 	}
 }
 
-// WorkerID returns this worker's id
-func (m *Manager) WorkerID() string {
+// ID is the unique ID for this work manager
+func (m *Manager) ID() string {
 	return m.id
 }
 
@@ -110,7 +115,7 @@ func (m *Manager) Start(ctx context.Context) {
 				break
 			}
 
-			err := m.store.ClaimJob(ctx, job, m.id)
+			err := m.store.ClaimJob(ctx, job, m)
 
 			// Someone else got to it before us, keep looking.
 			if err != nil {

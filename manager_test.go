@@ -105,10 +105,11 @@ func (h *testHandler) Handle(ctx context.Context, job Job) error {
 }
 
 type storeStats struct {
-	Complete     int
-	Collisions   int
-	Fails        int
-	WorkerCounts map[string]int
+	Complete       int
+	Collisions     int
+	Fails          int
+	WorkerCounts   map[string]int
+	FinishedLabels []string
 }
 
 type testStore struct {
@@ -119,10 +120,11 @@ type testStore struct {
 
 func newStore(jobs map[int]Job) *testStore {
 	stats := &storeStats{
-		Complete:     0,
-		Collisions:   0,
-		Fails:        0,
-		WorkerCounts: make(map[string]int),
+		Complete:       0,
+		Collisions:     0,
+		Fails:          0,
+		WorkerCounts:   make(map[string]int),
+		FinishedLabels: make([]string, 0),
 	}
 
 	return &testStore{
@@ -146,12 +148,12 @@ func (s *testStore) GetAvailableJobs(ctx context.Context) (JobEnumerater, error)
 	return newEnumerator(jobs), nil
 }
 
-func (s *testStore) ClaimJob(ctx context.Context, job Job, workerID string) error {
+func (s *testStore) ClaimJob(ctx context.Context, job Job, worker Worker) error {
 	s.Lock()
 	defer s.Unlock()
 
 	if job.Available() {
-		job.SetWorkerID(workerID)
+		job.SetWorkerID(worker.ID())
 		job.SetExpires(time.Now().Add(5 * time.Second))
 		return nil
 	}
@@ -178,6 +180,7 @@ func (s *testStore) CompleteJob(ctx context.Context, job Job) error {
 
 	job.SetComplete()
 
+	s.stats.FinishedLabels = append(s.stats.FinishedLabels, fmt.Sprintf("job-%d", job.ID()))
 	s.stats.Complete++
 	return nil
 }
@@ -198,7 +201,7 @@ func (b *testBackoff) Pause() {
 }
 
 func TestManager(t *testing.T) {
-	totalJobs := 100
+	totalJobs := 1000
 	totalWorkers := 10
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -218,15 +221,26 @@ func TestManager(t *testing.T) {
 		}()
 	}
 
-	// wait for work to be done
-	d := (totalJobs/totalWorkers)*jobDelay + (totalWorkers * 100)
 	fmt.Printf("Total Jobs: %d Total Workers: %d\n", totalJobs, totalWorkers)
+
+	// A sort of shot-in-the-dark calc to estimate how long this should take
+	d := int(math.Min(20000, float64((totalJobs/totalWorkers)*jobDelay+(totalWorkers*100))))
 	fmt.Printf("Waiting %dms...\n", d)
 	time.Sleep(time.Duration(d) * time.Millisecond)
 
 	cancel()
 
-	fmt.Printf("Stats: %+v\n", store.stats)
+	fmt.Printf("Stats: %+v\n", struct {
+		Complete   int
+		Collisions int
+		Failures   int
+		Workloads  map[string]int
+	}{
+		Complete:   store.stats.Complete,
+		Collisions: store.stats.Collisions,
+		Failures:   store.stats.Fails,
+		Workloads:  store.stats.WorkerCounts,
+	})
 
 	require.Equal(t, totalWorkers, len(store.stats.WorkerCounts))
 	require.Equal(t, totalJobs, store.stats.Complete)
@@ -238,5 +252,10 @@ func TestManager(t *testing.T) {
 		total += count
 	}
 
+	// Check that we did exactly the amount of jobs, and that we did all the individual jobs
 	require.Equal(t, totalJobs, total)
+	require.Equal(t, totalJobs, len(store.stats.FinishedLabels))
+	for i := 1; i <= totalJobs; i++ {
+		require.Contains(t, store.stats.FinishedLabels, fmt.Sprintf("job-%d", i))
+	}
 }
