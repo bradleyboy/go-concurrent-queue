@@ -7,40 +7,63 @@ import (
 )
 
 // Job is a description of a unit of work that needs to be done
-type Job interface {
-	ID() int
-	Version() int
-	SetWorkerID(id string)
-	WorkerID() string
-	SetExpires(t time.Time)
-	Expires() time.Time
-	SetComplete()
-	IsComplete() bool
-	Available() bool
+type Job struct {
+	sync.Mutex
+	id       int
+	workerID string
+	begins   time.Time
+	expires  time.Time
+	complete bool
 }
 
-// JobEnumerater describes how to iterate through Jobs
-type JobEnumerater interface {
-	Next() Job
+// ID returns the unique identifier for this job
+func (j *Job) ID() int {
+	return j.id
+}
+
+// IsAvailable returns whether the job is eligible for processing by a new worker
+func (j *Job) IsAvailable() bool {
+	j.Lock()
+	defer j.Unlock()
+
+	return !j.complete && j.expires.Before(time.Now()) && j.begins.Before(time.Now())
+}
+
+// WorkerID returns the assigned worker
+func (j *Job) WorkerID() string {
+	j.Lock()
+	defer j.Unlock()
+	return j.workerID
+}
+
+// Lease checks out the job for processing for a specific time, for a specific worker
+func (j *Job) Lease(d time.Duration, workerID string) {
+	j.Lock()
+	defer j.Unlock()
+	j.expires = time.Now().Add(d)
+	j.workerID = workerID
+}
+
+// Complete marks the job as done
+func (j *Job) Complete() {
+	j.Lock()
+	defer j.Unlock()
+	j.complete = true
 }
 
 // Handler does the actual work for a given job
 type Handler interface {
-	Handle(ctx context.Context, job Job) error
+	Handle(ctx context.Context, job *Job) error
 }
 
 // Storer handles fetching and claming jobs from a datastore
 type Storer interface {
-	GetAvailableJobs(ctx context.Context) (JobEnumerater, error)
-	ClaimJob(ctx context.Context, job Job, worker Worker) error
-	FetchJob(ctx context.Context, job Job) (Job, error)
-	CompleteJob(ctx context.Context, job Job) error
-	FailJob(ctx context.Context, job Job) error
-}
-
-// Worker is an interface that provides a unique ID
-type Worker interface {
-	ID() string
+	// Lease checks out `count` jobs for a given duration, assigning it to the workerID
+	Lease(ctx context.Context, count int, duration time.Duration, workerID string) ([]*Job, error)
+	// Return gives a job back ot the queue, signaling it should be retried
+	Return(ctx context.Context, job *Job) error
+	// Done marks the job complete, no further processing should occur
+	Done(ctx context.Context, job *Job) error
 }
 
 // Waiter controls how the manager pauses between runs
@@ -99,41 +122,19 @@ func (m *Manager) Start(ctx context.Context) {
 			break
 		}
 
-		// Get a list of available jobs from the store
-		col, err := m.store.GetAvailableJobs(ctx)
-
+		jobs, err := m.store.Lease(ctx, 1, time.Duration(10*time.Minute), m.id)
 		// Either we found no jobs, or there was a problem. Either way pause and try again.
 		if err != nil {
 			m.pause()
 			continue
 		}
 
-		for {
-			job := col.Next()
-
-			if job == nil {
-				break
-			}
-
-			err := m.store.ClaimJob(ctx, job, m)
-
-			// Someone else got to it before us, keep looking.
-			if err != nil {
-				continue
-			}
-
-			// Fetch the entire job from the store, ensuring this worker is still the worker assigned
-			j, err := m.store.FetchJob(ctx, job)
-
-			if err != nil || j.WorkerID() != m.id {
-				continue
-			}
-
+		for _, job := range jobs {
 			// Do the actual work
-			err = m.handler.Handle(ctx, j)
+			err = m.handler.Handle(ctx, job)
 
 			if err != nil {
-				err = m.store.FailJob(ctx, j)
+				err = m.store.Return(ctx, job)
 				if err != nil {
 					// log or something
 				}
@@ -143,7 +144,7 @@ func (m *Manager) Start(ctx context.Context) {
 			}
 
 			// Mark job as complete
-			err = m.store.CompleteJob(ctx, j)
+			err = m.store.Done(ctx, job)
 
 			if err != nil {
 				// log or something
