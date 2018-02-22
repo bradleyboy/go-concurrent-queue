@@ -149,9 +149,6 @@ func (m *Manager) Start(ctx context.Context) {
 			if err != nil {
 				// log or something
 			}
-
-			// Just do one job per iteration
-			break
 		}
 	}
 }
